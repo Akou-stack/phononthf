@@ -137,10 +137,13 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 	}
 	//Mapping Done!
 
-// read lammps0.txt
+// read lammps.txt
 	char *pch;
-	int mid, chg;
-	coord>>ntot;
+	double chg;
+	int mid, ntot_input;
+	coord>>ntot_input;
+	if (ntot!=ntot_input)
+		error->all(FLERR,"Total number of atoms from lammps.txt and LAMMPS itself are not consistent!");
 	memory->create(ratom,ntot,3,"phononthf:ratom");
 	i=0;// check if lammps.txt is in the right format
 	while(1){
@@ -177,7 +180,7 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 				coord>>id>>mid>>tt>>chg>>xtmp[0]>>xtmp[1]>>xtmp[2];
 			}
 			for(l=0;l<3;l++){
-				ratom[id-1][l]=xtmp[l];// id starts from 0
+				ratom[id-1][l]=xtmp[l]; // id starts from 0
 			}
 		}
 		prepared=1;
@@ -207,6 +210,7 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 	memory->destroy(kpt);
 	memory->destroy(ratom);
 	memory->destroy(array);
+
 }
 
 
@@ -308,8 +312,8 @@ void ComputePHONONTHF::compute_array()
 		for(i=0;i<ntot;i++){
 			if (!(mask[i] & groupbit)) continue;
 			id = tag[i];
-			kk = at2bs[id-1];// only knowledge about tag of basis atom is needed, no cell info needed.
-			sqrtmass=sqrt(mass[type[id-1]]/(natoms/nbasis));//ncell=natoms/nbasis			
+			kk = at2bs[id-1];	// only knowledge about tag of basis atom is needed, no cell info needed.
+			sqrtmass=sqrt(mass[type[id-1]]/(natoms/nbasis));	//ncell=natoms/nbasis			
 			eiqr=0.;
 			for(d=0;d<3;d++) 
 				eiqr += -kpt[ik][d]*ratom[id-1][d];
@@ -323,12 +327,13 @@ void ComputePHONONTHF::compute_array()
 				}
 			}
 		}// Xdot
+
 		// loop to calculate Heat Flux
 		for(i=0;i<ntot;i++){
 			if (!(mask[i] & groupbit)) continue;
 			id = tag[i];	
-			kk = at2bs[i];// only knowledge about tag of basis atom is needed, no cell info needed.
-			sqrtmass2=sqrt(1/mass[type[id-1]]/(natoms/nbasis));//ncell=natoms/nbasis		
+			kk = at2bs[id-1];	// only knowledge about tag of basis atom is needed, no cell info needed.
+			sqrtmass2=sqrt(1/mass[type[id-1]]/(natoms/nbasis));	//ncell=natoms/nbasis		
 			eiqr=0.;
 			for(d=0;d<3;d++)
 				eiqr += kpt[ik][d]*ratom[id-1][d];
@@ -349,7 +354,7 @@ void ComputePHONONTHF::compute_array()
 					hfim[ik][iv][d] += -sqrtmass2*(StressEigI[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv]) + StressEigR[d]*(sn*sumvre[ik][iv]+cs*sumvim[ik][iv]));
 				}
 			}	
-		}// Heat Flux
+		}	// Heat Flux
 		for(iv=0;iv<nbasis*3;iv++){					
 			energyk[ik][iv] += (sumvre[ik][iv]*sumvre[ik][iv]+sumvim[ik][iv]*sumvim[ik][iv])/2.0;
 		}
@@ -357,7 +362,7 @@ void ComputePHONONTHF::compute_array()
 			sumvre[ik][iv]=0.;
 			sumvim[ik][iv]=0.;	
 		}	
-	}// for k-points
+	}	// for k-points
 
 	for(ik=0;ik<nkpp;ik++){
 		for(iv=0;iv<nbasis*3;iv++){
