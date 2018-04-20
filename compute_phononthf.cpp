@@ -12,9 +12,10 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: *
+   Contributing authors: Tianli Feng, Yang Zhong, and Xiulin Ruan
 ------------------------------------------------------------------------- */
 
+#include <mpi.h>
 #include "stdlib.h"
 #include <string.h>
 #include <math.h>
@@ -38,8 +39,8 @@ using namespace LAMMPS_NS;
 
 ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 	Compute(lmp, narg, arg),
-	id_ke(NULL), id_pe(NULL), id_stress(NULL), 
-	kpt(NULL), eigenv(NULL)
+	id_ke(NULL), id_pe(NULL), id_stress(NULL),
+	kpt(NULL), eigenv(NULL), at2bs(NULL), ratom(NULL)
 {
 	if (narg != 7) error->all(FLERR,"Illegal compute phononthf command");
 	array_flag = 1;
@@ -98,10 +99,10 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 	if (!eigen_txt.is_open())
 		error->all(FLERR,"Could not open file: eigenvectors.txt");
 	if (!cellmap.is_open())
-		error->all(FLERR,"Could not open file: cellmap.txt");
+		error->all(FLERR,"Could not open file: cellbasismap.txt");
 	if (!coord.is_open())
 		error->all(FLERR,"Could not open file: lammps.txt");
-	
+
 	kpnts>>nk;
 	nkst = 0;
 	nked = nk;
@@ -186,20 +187,20 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 		prepared=1;
 	}
 	//Reading lammps.txt Done!
-	
+
 	kpnts.close();
 	recpvec.close();
 	eigen_txt.close();
 	cellmap.close();
 	coord.close();
-	
+
 	size_array_rows = nk;
  	size_array_cols = ((nbasis*3) + (nbasis*3)*3);
 	memory->create(array,size_array_rows,size_array_cols,"phononthf:array");
 
 }
 
-  
+
   ComputePHONONTHF::~ComputePHONONTHF()
 {
 	delete [] id_ke;
@@ -224,7 +225,7 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 	c_ke = modify->compute[ike];
 	c_pe = modify->compute[ipe];
 	c_stress = modify->compute[istress];
-	
+
 	pfactor = force->nktv2p;
 	efactor = force->mvv2e;
 	tfactor = 2/force->boltz;
@@ -233,7 +234,7 @@ ComputePHONONTHF::ComputePHONONTHF(LAMMPS *lmp, int narg, char **arg) :
 
 
 void ComputePHONONTHF::compute_array()
-{	
+{
 
 	// invoke 3 computes if they haven't been already
 	if (!(c_ke->invoked_flag & INVOKED_PERATOM)) {
@@ -257,8 +258,7 @@ void ComputePHONONTHF::compute_array()
 	int *mask = atom->mask;
   	double *mass = atom->mass;
 	tagint *tag = atom->tag;
-
-	// int nlocal = atom->nlocal;
+	int nlocal = atom->nlocal;
 
 	invoked_array = update->ntimestep;
 
@@ -266,14 +266,14 @@ void ComputePHONONTHF::compute_array()
 	int ik, iv, is;
 	int flag;
 	int id, nv, indeigen;
-	double eiqr, cs, sn, StressEigR[3], StressEigI[3], sqrtmass, sqrtmass2, xtmp[3];	
+	double eiqr, cs, sn, StressEigR[3], StressEigI[3], sqrtmass, sqrtmass2, xtmp[3];
 
 	//Allocation
 	double **vnf;
 	vnf = new double* [ntot];
 	for(i=0;i<ntot;i++) vnf[i] = new double [3];
 
-	double **stressf;	
+	double **stressf;
 	stressf = new double* [ntot];
 	for(i=0;i<ntot;i++) stressf[i] = new double [6];
 
@@ -295,27 +295,28 @@ void ComputePHONONTHF::compute_array()
 	}
 	//Allocation Done!
 
+	for(i=0;i<ntot;i++){
+		for(j=0;j<3;j++) vnf[i][j] = 0.0;
+		engf[i] = 0.0;
+		for(j=0;j<6;j++) stressf[i][j] = 0.0;
+	}
+	for(i=0;i<ntot;i++){
+		if (!(mask[i] & groupbit)) continue;
+		id = tag[i];
+		for(j=0;j<3;j++) vnf[id-1][j] = v[i][j];
+		engf[id-1] = pe[i] + ke[i];
+		for(j=0;j<6;j++) stressf[id-1][j] = stress[i][j]/pfactor;
+	}
+
 	for(ik=nkst;ik<nked;ik++){
 		// loop to calculate Xdot
-		for(i=0;i<ntot;i++){
-			for(j=0;j<3;j++) vnf[i][j] = 0.0;
-			engf[i] = 0.0;
-			for(j=0;j<6;j++) stressf[i][j] = 0.0;
-		}
-		for(i=0;i<ntot;i++){
-			if (!(mask[i] & groupbit)) continue;
-			id = tag[i];
-			for(j=0;j<3;j++) vnf[id-1][j] = v[i][j];
-			engf[id-1] = pe[i] + ke[i];
-			for(j=0;j<6;j++) stressf[id-1][j] = stress[i][j]/pfactor;
-		}
 		for(i=0;i<ntot;i++){
 			if (!(mask[i] & groupbit)) continue;
 			id = tag[i];
 			kk = at2bs[id-1];	// only knowledge about tag of basis atom is needed, no cell info needed.
-			sqrtmass=sqrt(mass[type[id-1]]/(natoms/nbasis));	//ncell=natoms/nbasis			
+			sqrtmass = sqrt(mass[type[id-1]]/(natoms/nbasis));	// ncell=natoms/nbasis
 			eiqr=0.;
-			for(d=0;d<3;d++) 
+			for(d=0;d<3;d++)
 				eiqr += -kpt[ik][d]*ratom[id-1][d];
 			cs=cos(eiqr);
 			sn=sin(eiqr);
@@ -331,9 +332,9 @@ void ComputePHONONTHF::compute_array()
 		// loop to calculate Heat Flux
 		for(i=0;i<ntot;i++){
 			if (!(mask[i] & groupbit)) continue;
-			id = tag[i];	
+			id = tag[i];
 			kk = at2bs[id-1];	// only knowledge about tag of basis atom is needed, no cell info needed.
-			sqrtmass2=sqrt(1/mass[type[id-1]]/(natoms/nbasis));	//ncell=natoms/nbasis		
+			sqrtmass2 = sqrt(1/mass[type[id-1]]/(natoms/nbasis));	//ncell=natoms/nbasis
 			eiqr=0.;
 			for(d=0;d<3;d++)
 				eiqr += kpt[ik][d]*ratom[id-1][d];
@@ -350,18 +351,18 @@ void ComputePHONONTHF::compute_array()
 				for(d=0;d<3;d++){
 					hfre[ik][iv][d] += sqrtmass2*engf[id-1]*(eigenv[indeigen].re[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv]) - eigenv[indeigen].im[d]*(sn*sumvre[ik][iv]+cs*sumvim[ik][iv]));
 					hfre[ik][iv][d] += -sqrtmass2*(StressEigR[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv]) - StressEigI[d]*(sn*sumvre[ik][iv]+cs*sumvim[ik][iv]));
-					hfim[ik][iv][d] += sqrtmass2*engf[id-1]*(eigenv[indeigen].re[d]*(cs*sumvim[ik][iv]+sn*sumvre[ik][iv]) + eigenv[indeigen].im[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv])); 
+					hfim[ik][iv][d] += sqrtmass2*engf[id-1]*(eigenv[indeigen].re[d]*(cs*sumvim[ik][iv]+sn*sumvre[ik][iv]) + eigenv[indeigen].im[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv]));
 					hfim[ik][iv][d] += -sqrtmass2*(StressEigI[d]*(cs*sumvre[ik][iv]-sn*sumvim[ik][iv]) + StressEigR[d]*(sn*sumvre[ik][iv]+cs*sumvim[ik][iv]));
 				}
-			}	
+			}
 		}	// Heat Flux
-		for(iv=0;iv<nbasis*3;iv++){					
+		for(iv=0;iv<nbasis*3;iv++){
 			energyk[ik][iv] += (sumvre[ik][iv]*sumvre[ik][iv]+sumvim[ik][iv]*sumvim[ik][iv])/2.0;
 		}
 		for(iv=0;iv<nbasis*3;iv++){
 			sumvre[ik][iv]=0.;
-			sumvim[ik][iv]=0.;	
-		}	
+			sumvim[ik][iv]=0.;
+		}
 	}	// for k-points
 
 	for(ik=0;ik<nkpp;ik++){
@@ -375,4 +376,11 @@ void ComputePHONONTHF::compute_array()
 		}
 	}
 
+	for (i = 0; i < ntot; i ++){
+     delete [] vnf[i];
+		 delete [] stressf[i];
+	}
+	delete [] engf;
+	delete [] vnf;
+	delete [] stressf;
 }

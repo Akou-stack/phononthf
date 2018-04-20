@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: *
+   Contributing authors: Tianli Feng, Yang Zhong, and Xiulin Ruan
 ------------------------------------------------------------------------- */
 
 #ifdef COMPUTE_CLASS
@@ -49,10 +49,9 @@ class ComputePHONONTHF : public Compute {
   double tfactor;
 
  private:
-  int nk, nkpp, nkst, nked;   // Number definition for k-points 
+  int nk, nkpp, nkst, nked;   // Number definition for k-points
   int natoms, nbasis;
   bigint ntot;
-  double l_c;                 // Lattice constant (A)
   char *id_ke,*id_pe,*id_stress;
   class Compute *c_ke,*c_pe,*c_stress;
   EIGEN *eigenv;
